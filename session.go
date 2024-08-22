@@ -54,6 +54,16 @@ func defaultCookieSettings() *CookieOptions {
 	}
 }
 
+func SetMaxAge(c *http.Cookie, maxAge int) {
+	c.MaxAge = maxAge
+	if maxAge > 0 {
+		duration := time.Duration(maxAge) * time.Second
+		c.Expires = time.Now().Add(duration)
+	} else if maxAge < 0 {
+		c.Expires = time.Unix(1, 0)
+	}
+}
+
 // AddCookieToResponse:
 // Takes a http.ResponseWriter and adds "Set-Cookie" header to the Response
 // with the values of the Session object that was created previously.
