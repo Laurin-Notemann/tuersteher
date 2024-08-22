@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+const (
+  ThirtyDays = 60 * 60 * 24 * 30
+)
+
 // Options stores configuration for a session or session store.
 type CookieOptions struct {
 	Path    string
@@ -43,7 +47,7 @@ func NewCookie() (*http.Cookie, error) {
 
 func defaultCookieSettings() *CookieOptions {
 	// MaxAge is an integer per second
-	maxAge := 60 * 60 * 24 * 30
+	maxAge := ThirtyDays
 	return &CookieOptions{
 		Path:     "/",
 		Domain:   "localhost",
