@@ -6,15 +6,11 @@ import (
 	"time"
 )
 
-type SessionCookie struct {
-	Id      string
-	Options *CookieOptions
-}
-
 // Options stores configuration for a session or session store.
 type CookieOptions struct {
-	Path   string
-	Domain string
+	Path    string
+	Domain  string
+	Expires time.Time
 	// MaxAge=0 means no Max-Age attribute specified and the cookie will be
 	// deleted after the browser session ends.
 	// MaxAge<0 means delete cookie immediately.
@@ -36,50 +32,47 @@ type CookieOptions struct {
 // SameSite: http.SameSiteDefaultMode,
 // to change one of these just do:
 // session.Options.Domain = "example.com"
-func NewSession() (SessionCookie, error) {
+func NewCookie() (*http.Cookie, error) {
 	id, err := GenerateRandomString(32)
-
 	if err != nil {
-		return SessionCookie{}, err
+		return &http.Cookie{}, err
 	}
 
-	return SessionCookie{
-		Id:      id,
-		Options: defaultCookieSettings(),
-	}, nil
+	return getCookie("tuersteher_session", id, defaultCookieSettings()), nil
 }
 
 func defaultCookieSettings() *CookieOptions {
+	// MaxAge is an integer per second
+	maxAge := 60 * 60 * 24 * 30
 	return &CookieOptions{
 		Path:     "/",
 		Domain:   "localhost",
-		MaxAge:   60 * 60 * 24 * 30,
+		MaxAge:   maxAge,
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteDefaultMode,
 	}
 }
 
-// AddSessionToResponse:
+// AddCookieToResponse:
 // Takes a http.ResponseWriter and adds "Set-Cookie" header to the Response
 // with the values of the Session object that was created previously.
 // Name of the cookie is automatically set to "tuersteher_session" and value
 // of the cookie is the id of the sessionCookie (same as the id that should be
 // saved int the database
-func (s *SessionCookie) AddSessionToResponse(w http.ResponseWriter) error {
-	if s.Options == nil {
-		return errors.New("No options are given")
-	}
-	http.SetCookie(w, NewCookie("tuersteher_session", s.Id, s.Options))
-	return nil
+func AddCookieToResponse(w http.ResponseWriter, c *http.Cookie) {
+	http.SetCookie(w, c)
 }
 
-func (s *SessionCookie) RemoveCookie(w http.ResponseWriter) {
-	s.Options.MaxAge = -1
-	http.SetCookie(w, NewCookie("tuersteher_session", "", s.Options))
+// Remove the cookie in the Response (set empty value and MaxAge -1
+// which automatically removes cookie)
+func RemoveCookie(w http.ResponseWriter) {
+	options := defaultCookieSettings()
+	options.MaxAge = -1
+	http.SetCookie(w, getCookie("tuersteher_session", "", options))
 }
 
-func NewCookie(name, value string, options *CookieOptions) *http.Cookie {
+func getCookie(name, value string, options *CookieOptions) *http.Cookie {
 	cookie := cookieFromOptions(name, value, options)
 	if options.MaxAge > 0 {
 		duration := time.Duration(options.MaxAge) * time.Second
@@ -103,29 +96,23 @@ func cookieFromOptions(name, value string, options *CookieOptions) *http.Cookie 
 	}
 }
 
-// GetIdFromCookie take the request as a parameter and searches for the cookie
+// GetCookieFromRequest take the request as a parameter and searches for the cookie
 // with the name "tuersteher_session" and then returns the value of that session
-func GetSessionFromCookie(r *http.Request) (SessionCookie, error) {
-	cookies := r.Cookies()
-	cookie, err := Find(cookies, func(cookie *http.Cookie) bool { return cookie.Name == "tuersteher_session" })
+func GetCookieFromRequest(r *http.Request) (*http.Cookie, error) {
+	cookie, err := find(
+		r.Cookies(),
+		func(cookie *http.Cookie) bool {
+			return cookie.Name == "tuersteher_session"
+		},
+	)
 	if err != nil {
-		return SessionCookie{}, err
+		return &http.Cookie{}, err
 	}
 
-	return SessionCookie{
-		Id: cookie.Value,
-		Options: &CookieOptions{
-			Path:     cookie.Path,
-			Domain:   cookie.Domain,
-			MaxAge:   cookie.MaxAge,
-			Secure:   cookie.Secure,
-			HttpOnly: cookie.HttpOnly,
-			SameSite: cookie.SameSite,
-		},
-	}, nil
+	return cookie, nil
 }
 
-func Find[T any](collection []T, search func(item T) bool) (T, error) {
+func find[T any](collection []T, search func(item T) bool) (T, error) {
 	for i := range collection {
 		if search(collection[i]) {
 			return collection[i], nil
