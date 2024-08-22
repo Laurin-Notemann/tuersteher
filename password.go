@@ -30,23 +30,24 @@ func ValidatePassword(password, confirmPassword string) error {
 	return nil
 }
 
-func HashPassword(password, salt string) string {
-	return string(argon2.IDKey([]byte(password), []byte(salt), 2, 32*1024, 4, 32))
+func HashPassword(password, salt string) []byte {
+	return argon2.IDKey([]byte(password), []byte(salt), 2, 32*1024, 4, 32)
 }
 
 // Password refers to the user entered password (e.g. on signIn)
 // storedSalt refers to the salt that is stored alongside the user and hashed password
 // storedHashedPw refers to the password that is stored belonging to the user
 //
-// If unequal returns an error 
-func ComparePassword(password, storedSalt, storedHashedPw string) error {
+// If unequal returns an error
+func ComparePassword(password, storedSalt string, storedHashedPw []byte) error {
 	hashedPassword := HashPassword(password, storedSalt)
 	// 0 means not the same
-	if subtle.ConstantTimeCompare([]byte(hashedPassword), []byte(storedHashedPw)) == 0 {
+	if subtle.ConstantTimeCompare(hashedPassword, storedHashedPw) == 0 {
 		return errors.New("Failed to compare passwords.")
 	}
 	return nil
 }
+
 
 // Size is the amount of byte 32 = 256 bits
 func GenerateRandomString(size int) (string, error) {
