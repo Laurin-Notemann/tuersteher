@@ -38,13 +38,13 @@ func GetGoogleOauthConfig(options OauthOptions) *oauth2.Config {
 		RedirectURL:  options.RedirectUrl,
 		ClientID:     options.ClientId,
 		ClientSecret: options.ClientSecret,
-		Scopes:       append([]string{"openid"}, options.Scopes...),
+		Scopes:       options.Scopes,
 		Endpoint:     google.Endpoint,
 	}
 }
 
 func NewGoogleTuersteherOauth(options OauthOptions) (TuersteherOauth, error) {
-	state, err := GenerateRandomString(32)
+	state, err := GenerateRandomString(16)
 	if err != nil {
 		return TuersteherOauth{}, err
 	}
