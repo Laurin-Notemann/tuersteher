@@ -28,7 +28,9 @@ type OauthOptions struct {
 type OauthScopes = []string
 
 type TuersteherUser struct {
-	Email string `json:"email"`
+	Email      string `json:"email"`
+	ProviderId string `json:"localId"`
+	Name       string `json:"displayName"`
 }
 
 // Example scope:
