@@ -29,8 +29,8 @@ type OauthScopes = []string
 
 type TuersteherUser struct {
 	Email      string `json:"email"`
-	ProviderId string `json:"localId"`
-	Name       string `json:"displayName"`
+	ProviderId string `json:"id"`
+	Name       string `json:"name"`
 }
 
 // Example scope:
@@ -93,8 +93,6 @@ func (t *TuersteherOauth) GetUserInfo(r *http.Request) (TuersteherUser, error) {
 	if err != nil {
 		return user, fmt.Errorf("Could not parse the body of the google api response: %s", err.Error())
 	}
-
-	fmt.Printf("Response Body: %s\n", string(resByte))
 
 	err = json.Unmarshal(resByte, &user)
 	if err != nil {
