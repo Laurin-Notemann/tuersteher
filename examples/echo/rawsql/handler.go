@@ -2,9 +2,12 @@ package rawsql
 
 import (
 	"database/sql"
+	"errors"
+	"log"
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/laurin-notemann/tuersteher"
 )
@@ -33,44 +36,13 @@ func RegisterUser(c echo.Context) error {
 	hashedPassword := tuersteher.HashPassword(password, salt)
 
 	// Save the username, email, the hashed password and the salt in the db
-	user, err := InsertUser(
-		dbCon,
-		&PGUser{
-			Username:       username,
-			Email:          email,
-			HashedPassword: hashedPassword,
-			Salt:           salt,
-		})
+
+	user, err := CreateUserWithCreds(dbCon, username, email, salt, hashedPassword)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	// Generate a cookie, that has the name="tuersteher_session" and a random generated
-	// string as a value, MaxAge is set to 30days
-	cookie, err := tuersteher.NewCookie()
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-
-	// To change a value of the cookie just set the value like so:
-	cookie.SameSite = http.SameSiteLaxMode
-	cookie.Secure = false
-
-	// Create Session in DB and save the cookie.Value, user.Id, and cookie.Expires
-	err = InsertSession(
-		dbCon,
-		&PGSession{
-			Id:           cookie.Value,
-			UserId:       user.Id,
-			ExpiryDate:   cookie.Expires,
-			LastSeenTime: time.Now(),
-		},
-	)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-
-	tuersteher.AddCookieToResponse(c.Response(), cookie)
+	err = createSession(c, user.Id, dbCon)
 
 	return c.Redirect(303, "/")
 }
@@ -82,45 +54,19 @@ func LoginUser(c echo.Context) error {
 	password := c.FormValue("password")
 
 	// Call to DB to get the user by email, to get later save the session with the user.Id
-	user, err := SelectOneUserByEmail(dbCon, email)
+	user, userCreds, err := FindUserAndCredsByEmail(dbCon, email)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
 	}
 
 	// Compare the password the user has input to the one the one in the db, if they are
 	// not the same then it erors
-	err = tuersteher.ComparePassword(password, user.Salt, user.HashedPassword)
+	err = tuersteher.ComparePassword(password, userCreds.Salt, userCreds.PasswordHash)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
 	}
 
-	// Generate a cookie, that has the name="tuersteher_session" and a random generated
-	// string as a value, MaxAge is set to 30days
-	cookie, err := tuersteher.NewCookie()
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-
-	// To change a value of the cookie just set the value like so:
-	cookie.SameSite = http.SameSiteLaxMode
-	cookie.Secure = false
-
-	// Create Session in DB and save the cookie.Value, user.Id, and cookie.Expires
-	err = InsertSession(
-		dbCon,
-		&PGSession{
-			Id:           cookie.Value,
-			UserId:       user.Id,
-			ExpiryDate:   cookie.Expires,
-			LastSeenTime: time.Now(),
-		},
-	)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-
-	// Add the cookie data to the Response
-	tuersteher.AddCookieToResponse(c.Response(), cookie)
+	err = createSession(c, user.Id, dbCon)
 
 	return c.Redirect(303, "/")
 }
@@ -199,4 +145,84 @@ func ValidateRequest(next echo.HandlerFunc) echo.HandlerFunc {
 
 		return next(c)
 	}
+}
+
+// This redirects to the google service to be able to log in with google
+func GoogleRedirect(c echo.Context) error {
+	tuersteher := c.Get("_tuersteher").(*tuersteher.TuersteherOauth)
+	return c.Redirect(http.StatusTemporaryRedirect, tuersteher.GetAuthUrl())
+}
+
+// After the sign in/up in google, this is the endpoint google will redirect the user to
+// which will then take the information from google to either create a new account or if one already exists
+// will directly log in and create a session
+func GoogleCallback(c echo.Context) error {
+	tuersteherGoogle, ok := c.Get("_tuersteher").(*tuersteher.TuersteherOauth)
+	if !ok {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get TuersteherOauth from context")
+	}
+	dbCon, ok := c.Get("_db").(*sql.DB)
+	if !ok {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get database connection from context")
+	}
+
+  // This is the main interaction with google which will get the user information
+	tuersteherUser, err := tuersteherGoogle.GetUserInfo(c.Request())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	// Call to DB to get the user by email, to get later save the session with the user.Id
+	user, err := SelectOneUserByEmail(dbCon, tuersteherUser.Email)
+	// This means the user is not in the database which means we need to create a new user
+	if errors.Is(err, sql.ErrNoRows) {
+    log.Print("rtest")
+
+		user, err = CreateUserWithGoogleOAuth(dbCon, tuersteherUser.Name, tuersteherUser.Email, tuersteherUser.ProviderId)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		}
+	} else if err != nil {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
+	}
+
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	err = createSession(c, user.Id, dbCon)
+
+	return c.Redirect(http.StatusFound, "/")
+}
+
+func createSession(c echo.Context, userId uuid.UUID, dbCon *sql.DB) error {
+	// Generate a cookie, that has the name="tuersteher_session" and a random generated
+	// string as a value, MaxAge is set to 30days
+	cookie, err := tuersteher.NewCookie()
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	// To change a value of the cookie just set the value like so:
+	cookie.SameSite = http.SameSiteLaxMode
+	cookie.Secure = false
+
+	// Create Session in DB and save the cookie.Value, user.Id, and cookie.Expires
+	err = InsertSession(
+		dbCon,
+		&PGSession{
+			Id:           cookie.Value,
+			UserId:       userId,
+			ExpiryDate:   cookie.Expires,
+			LastSeenTime: time.Now(),
+		},
+	)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	// Add the cookie data to the Response
+	tuersteher.AddCookieToResponse(c.Response(), cookie)
+
+	return nil
 }

@@ -41,7 +41,7 @@ Examples are available for:
 
 ## Featueres/Tutorials to be added
 - [ ] 2FA
-- [ ] OAuth
+- [x] OAuth
 - [ ] Email Verification
 - [ ] Password reset
 - [ ] Passkeys

@@ -5,10 +5,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"text/template"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/laurin-notemann/tuersteher"
 	"github.com/laurin-notemann/tuersteher/example/echo/rawsql"
 	_ "github.com/lib/pq"
 )
@@ -32,6 +34,15 @@ func dbMiddleware(db *sql.DB) echo.MiddlewareFunc {
 	}
 }
 
+func oauthMiddleware(tuersteher *tuersteher.TuersteherOauth) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			c.Set("_tuersteher", tuersteher)
+			return next(c)
+		}
+	}
+}
+
 func main() {
 	// Get basic sql postgres connection to execute sql statements
 	dbCon, err := sql.Open("postgres", dbUrl)
@@ -49,6 +60,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	err = rawsql.CreateUserCredentialsTable(dbCon)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = rawsql.CreateOauthProviderTable(dbCon)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = rawsql.CreateUserOauthAccountsTable(dbCon)
+	if err != nil {
+		log.Fatal(err)
+	}
 	err = rawsql.CreateSessionTable(dbCon)
 	if err != nil {
 		log.Fatal(err)
@@ -59,10 +82,21 @@ func main() {
 		templates: template.Must(template.ParseGlob("views/*.html")),
 	}
 
+	tuersteher, err := tuersteher.NewGoogleTuersteherOauth(tuersteher.OauthOptions{
+		ClientId:     os.Getenv("GOOGLE_CLIENT_ID"),
+		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
+    RedirectUrl:  "http://localhost:3050/login/google/callback",
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Basic echo setup
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(dbMiddleware(dbCon))
+	e.Use(oauthMiddleware(&tuersteher))
 	e.Renderer = t
 
 	e.GET("/", indexRoute)
@@ -74,7 +108,10 @@ func main() {
 	e.POST("/login", rawsql.LoginUser)
 	e.POST("/logout", rawsql.LogoutUser)
 
-  // test get request that is protected 
+	e.GET("/login/google", rawsql.GoogleRedirect)
+	e.GET("/login/google/callback", rawsql.GoogleCallback)
+
+	// test get request that is protected
 	e.GET("/test-protected", func(c echo.Context) error {
 		log.Print("Success")
 		return c.String(200, "Moin Meister")
