@@ -94,6 +94,8 @@ func (t *TuersteherOauth) GetUserInfo(r *http.Request) (TuersteherUser, error) {
 		return user, fmt.Errorf("Could not parse the body of the google api response: %s", err.Error())
 	}
 
+	fmt.Printf("Response Body: %s\n", string(resByte))
+
 	err = json.Unmarshal(resByte, &user)
 	if err != nil {
 		return user, fmt.Errorf("Could not parse the bytes of the body: %s", err.Error())
